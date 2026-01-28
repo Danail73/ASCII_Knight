@@ -12,6 +12,9 @@ struct Fireball {
 	clock_t lastMove;
 };
 
+int lastDrawnHP = -1;
+int lastDrawnBossHP = -1;
+
 bool gameOver = false;
 const int ARENA_WIDTH = 25;
 const int ARENA_LENGTH = 100;
@@ -56,20 +59,15 @@ const char CRAWLER_CHAR = 'C';
 
 int jumpers = 0;
 const int Jumpers_HP = 2;
-
 int** jumpersPositions;
 int* jumpersDirections;
-
 bool* jumpersIsJumping;
 int* jumpersJumpStep;
 clock_t* jumpersLastJump;
-
 int** jumperSpots;
 int jumperSpotsCount = 0;
-
 const double JUMPER_STEP_TIME = 0.25;
 const double JUMPER_JUMP_TIME = 0.08;
-
 clock_t lastJumperStep = 0;
 
 const int BOSS_SIZE = 3;
@@ -120,6 +118,16 @@ const char attackLeft[3] = { '/', '|', '\\' };
 const char attackDown[3] = { '\\', '_', '/' };
 const char attackRight[3] = { '\\', '|', '/' };
 
+HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+
+const int COLOR_DEFAULT = 7;
+const int COLOR_JUMPER = 11;
+const int COLOR_FLIER = 9;
+const int COLOR_CRAWLER = 10;
+const int COLOR_WALKER = 7;
+const int COLOR_BOSS = 14;
+
+
 bool attackActive = false;
 int attackX = 0;
 int attackY = 0;
@@ -142,15 +150,15 @@ const double ATTACK_FRAME_TIME = 1.0 / 5.0;
 clock_t lastFrame = clock();
 
 void heroJump(int jumpDiff=0);
-void action(int jumpDiff=0);
+void action();
 void gravityPull();
-void drawChar(int x, int y, char c);
+void drawChar(int x, int y, char c, int color=COLOR_DEFAULT);
 bool isSolid(int x, int y);
 bool enemyAt(int x, int y);
 bool isBossTile(int x, int y);
 
-void isHP0() {
-	if (HERO_HP==0)
+void isPlayerDead() {
+	if (HERO_HP<=0)
 		gameOver = true;
 }
 
@@ -185,6 +193,22 @@ bool isBlocked(int x, int y) {
 		arena[y][x] == '=' ||
 		arena[y][x] == 'E';
 }
+
+void clearScreen() {
+	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+	CONSOLE_SCREEN_BUFFER_INFO csbi;
+	DWORD written;
+
+	GetConsoleScreenBufferInfo(hConsole, &csbi);
+
+	DWORD size = csbi.dwSize.X * csbi.dwSize.Y;
+	COORD home = { 0, 0 };
+
+	FillConsoleOutputCharacter(hConsole, ' ', size, home, &written);
+	FillConsoleOutputAttribute(hConsole, csbi.wAttributes, size, home, &written);
+	SetConsoleCursorPosition(hConsole, home);
+}
+
 
 
 //hero knockback
@@ -239,13 +263,6 @@ void updateKnockback() {
 
 //walkers logic
 
-void setWalker(int x, int y) {
-	arena[y][x] = 'E';
-	walkersPositions[0][walkers] = x;
-	walkersPositions[1][walkers] = y;
-	walkers++;
-}
-
 void collectWalkerSpots() {
 	walkerSpotsCount = 0;
 
@@ -286,18 +303,18 @@ void setWalkers(int count) {
 		int x = walkerSpots[r][0];
 		int y = walkerSpots[r][1];
 
-		drawChar(x, y, 'E');
+		drawChar(x, y, 'E', COLOR_WALKER);
 		walkersPositions[i][0] = x;
 		walkersPositions[i][1] = y;
-		walkersDirections[count] = rand() % 2;
+		walkersDirections[i] = rand() % 2;
 		walkers++;
 		totalEnemies++;
 	}
 }
 
-void redrawEnemy(int x, int y, int newX, int newY, char enemy) {
-	drawChar(x, y, ' ');
-	drawChar(newX, newY, enemy);
+void redrawEnemy(int x, int y, int newX, int newY, char enemy, int color) {
+	drawChar(x, y, ' ', color);
+	drawChar(newX, newY, enemy, color);
 }
 
 void updateWalkers() {
@@ -316,7 +333,8 @@ void updateWalkers() {
 		if (arena[y + 1][x] == ' ' && !walkerAt(x, y + 1)) {
 			drawChar(x, y, ' ');
 			walkersPositions[i][1]++;
-			drawChar(x, y + 1, 'E');
+			drawChar(x, y+1, 'E', COLOR_WALKER);
+
 			continue;
 		}
 
@@ -325,7 +343,7 @@ void updateWalkers() {
 			!isHeroAt(x+step,y) && !enemyAt(x+step, y)){
 
 			walkersPositions[i][0] += step;
-			redrawEnemy(x, y, x + step, y, 'E');
+			redrawEnemy(x, y, x + step, y, 'E', COLOR_WALKER);
 		}
 		else {
 			if (isHeroAt(x+step, y)) {
@@ -365,7 +383,7 @@ void setFliers(int count) {
 			y = rand() % (ARENA_WIDTH - 2) + 1;
 		} while (arena[y][x] != ' ');
 
-		drawChar(x, y, 'F');
+		drawChar(x, y, 'F', COLOR_FLIER);
 
 		fliersPositions[i][0] = x;
 		fliersPositions[i][1] = y;
@@ -391,7 +409,7 @@ void updateFliers() {
 
 		if (arena[ny][x] == ' ' && !isHeroAt(x, ny)) {
 			fliersPositions[i][1] += step;
-			redrawEnemy(x, y, x, ny, 'F');
+			redrawEnemy(x, y, x, ny, 'F', COLOR_FLIER);
 		}
 		else {
 			if (isHeroAt(x, ny)) {
@@ -472,7 +490,7 @@ void setCrawlers(int count) {
 		int x = crawlerSpots[r][0];
 		int y = crawlerSpots[r][1];
 
-		drawChar(x, y, 'C');
+		drawChar(x, y, 'C', COLOR_CRAWLER);
 		crawlersPositions[i][0] = x;
 		crawlersPositions[i][1] = y;
 		crawlers++;
@@ -552,7 +570,7 @@ void setJumpers(int count) {
 		jumpersJumpStep[i] = 0;
 		jumpersLastJump[i] = 0;
 
-		drawChar(x, y, 'J');
+		drawChar(x, y, 'J', COLOR_JUMPER);
 		jumpers++;
 		totalEnemies++;
 	}
@@ -596,7 +614,7 @@ void updateJumpers() {
 				drawChar(x, y, ' ');
 				jumpersPositions[i][0] = nx;
 				jumpersPositions[i][1] = ny;
-				drawChar(nx, ny, 'J');
+				drawChar(nx, ny, 'J', COLOR_JUMPER);
 			}
 
 			jumpersJumpStep[i]++;
@@ -611,7 +629,7 @@ void updateJumpers() {
 		if (arena[y + 1][x] == ' ' && !jumperAt(x, y + 1)) {
 			drawChar(x, y, ' ');
 			jumpersPositions[i][1]++;
-			drawChar(x, y + 1, 'J');
+			drawChar(x, y + 1, 'J', COLOR_JUMPER);
 			continue;
 		}
 
@@ -637,7 +655,7 @@ void updateJumpers() {
 		if (canWalk) {
 			drawChar(x, y, ' ');
 			jumpersPositions[i][0] = nx;
-			drawChar(nx, y, 'J');
+			drawChar(nx, y, 'J', COLOR_JUMPER);
 		}
 		else {
 			jumpersDirections[i] = !jumpersDirections[i];
@@ -672,7 +690,7 @@ void spawnBoss() {
 	for (int y = 0; y < BOSS_SIZE; y++) {
 		for (int x = 0; x < BOSS_SIZE; x++) {
 			arena[BOSS_Y + y][BOSS_X + x] = 'B';
-			drawChar(BOSS_X + x, BOSS_Y + y, 'B');
+			drawChar(BOSS_X + x, BOSS_Y + y, 'B', COLOR_BOSS);
 		}
 	}
 	isBossSpawned = true;
@@ -711,7 +729,7 @@ void bossSummonEnemies() {
 			walkersPositions = newWalkers;
 			walkersDirections = newDirs;
 
-			drawChar(spawnX, spawnY, 'E');
+			drawChar(spawnX, spawnY, 'E', COLOR_WALKER);
 			walkers++;
 			totalEnemies++;
 		}
@@ -823,7 +841,7 @@ void damageBoss() {
 
 
 void updateBoss() {
-	if (!isBossSpawned || BOSS_HP <= 0) return; // <-- add isBossSpawned check
+	if (!isBossSpawned || BOSS_HP <= 0) return;
 
 	updateBossFireCooldown();
 	bossLaunchFireball();
@@ -857,12 +875,16 @@ bool canAttackAt(int startX, int startY, int dirX, int dirY) {
 		!isSolid(startX - dirX, startY + dirY);
 }
 
-void drawChar(int x, int y, char c) {
+void drawChar(int x, int y, char c, int color) {
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	COORD pos = { (SHORT)x, (SHORT)y };
+
 	SetConsoleCursorPosition(hConsole, pos);
+	SetConsoleTextAttribute(hConsole, color);
 	cout << c;
+	SetConsoleTextAttribute(hConsole, COLOR_DEFAULT); 
 }
+
 
 
 
@@ -981,9 +1003,46 @@ int calculateBestPositionSecondLayer(int leftBorderline, int rightBorderline) {
 	return neededX;
 }
 
+void drawHP() {
+	if (HERO_HP == lastDrawnHP) return;
+
+	lastDrawnHP = HERO_HP;
+
+	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+	COORD pos = { 0, (SHORT)ARENA_WIDTH };
+	SetConsoleCursorPosition(hConsole, pos);
+
+	cout << "HP: ";
+	for (int i = 0; i < HERO_HP; i++)
+		cout << "<3" << ' ';
+	cout << "     ";
+}
+
+void drawBossHP() {
+	if (!isBossSpawned || BOSS_HP <= 0) return;
+	if (BOSS_HP == lastDrawnBossHP) return;
+
+	lastDrawnBossHP = BOSS_HP;
+
+	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+	COORD pos = { 0, (SHORT)(ARENA_WIDTH + 1) };
+	SetConsoleCursorPosition(hConsole, pos);
+
+	cout << "BOSS: ";
+	for (int i = 0; i < BOSS_HP; i++)
+		cout << "<3" << ' ';
+	cout << "     ";
+}
+
+
 void arenaSetup() {
 	generateArenaBoundaries();
 	printArena();
+	lastDrawnHP = -1;
+	drawHP();
+	lastDrawnBossHP = -1;
+	drawBossHP();
+
 	drawChar(HERO_X, HERO_Y, '@');
 	generateLayerPlatform(1, (ARENA_LENGTH - 1) / 2, ARENA_WIDTH - 9, ARENA_WIDTH - 4);
 	int newPlatformX = calculateBestPositionSecondLayer(1, ARENA_WIDTH / 2);
@@ -994,7 +1053,7 @@ void arenaSetup() {
 }
 
 void setupWave(int wave) {
-	system("cls");
+	clearScreen();
 
 	totalEnemies = 0;
 	arenaSetup();
@@ -1043,7 +1102,7 @@ void setupWave(int wave) {
 }
 
 bool anyEnemiesAlive() {
-	return totalEnemies > 0;
+	return totalEnemies > 0 || BOSS_HP > 0;
 }
 
 bool isBossAlive() {
@@ -1060,12 +1119,11 @@ void updateWaves() {
 	if (!anyEnemiesAlive()) {
 		currentWave++;
 
-		if (currentWave >= TOTAL_WAVES || !isBossAlive()) {
-			gameOver = true; // victory
-			return;
-		}
-
 		spawningWave = true;
+	}
+	if (currentWave >= TOTAL_WAVES && !isBossAlive()) {
+		gameOver = true; // victory
+		return;
 	}
 }
 
@@ -1133,14 +1191,7 @@ void eraseAttack() {
 	}
 }
 
-
-
-void updateAttack() {
-	if (!attackActive) return;
-
-	int nextX = attackX + (attackDir == 1 ? -1 : attackDir == 3 ? 1 : 0);
-	int nextY = attackY + (attackDir == 0 ? -1 : attackDir == 2 ? 1 : 0);
-
+void checkWalkerHit() {
 	for (int i = 0; i < walkers; i++) {
 		if (!walkersPositions[i]) continue;
 
@@ -1156,7 +1207,9 @@ void updateAttack() {
 			totalEnemies--;
 		}
 	}
+}
 
+void checkFlierHit() {
 	for (int i = 0; i < fliers; i++) {
 		if (!fliersPositions[i]) continue;
 
@@ -1172,7 +1225,9 @@ void updateAttack() {
 			totalEnemies--;
 		}
 	}
+}
 
+void checkCrawlerHit() {
 	for (int i = 0; i < crawlers; i++) {
 		if (!crawlersPositions[i]) continue;
 
@@ -1191,7 +1246,9 @@ void updateAttack() {
 			totalEnemies--;
 		}
 	}
+}
 
+void checkJumperHit() {
 	for (int i = 0; i < jumpers; i++) {
 		if (!jumpersPositions[i]) continue;
 
@@ -1210,6 +1267,18 @@ void updateAttack() {
 			totalEnemies--;
 		}
 	}
+}
+
+void updateAttack() {
+	if (!attackActive) return;
+
+	int nextX = attackX + (attackDir == 1 ? -1 : attackDir == 3 ? 1 : 0);
+	int nextY = attackY + (attackDir == 0 ? -1 : attackDir == 2 ? 1 : 0);
+
+	checkWalkerHit();
+	checkFlierHit();
+	checkCrawlerHit();
+	checkJumperHit();
 
 	bool bossHit = false;
 
@@ -1231,14 +1300,11 @@ void updateAttack() {
 		return;
 	}
 
-
-
 	if (attackHitsSolid(nextX, nextY)) {
 		eraseAttack();
 		attackActive = false;
 		return;
 	}
-
 
 	if (attackStep >= ATTACK_MAX_STEPS) {
 		eraseAttack();
@@ -1307,7 +1373,7 @@ void moveHorizontaly(int key) {
 
 
 
-void moveHero(int key, int jumpDiff=0) {
+void moveHero(int key) {
 	switch (key) {
 		case 'a':
 		case 'd': moveHorizontaly(key); break;
@@ -1319,13 +1385,16 @@ void moveHero(int key, int jumpDiff=0) {
 	}
 }
 
-void action(int jumpDiff) {
+void action() {
 	updateAttack();
 	updateWalkers();
 	updateFliers();
 	updateJumpers();
 	updateBoss();
 	updateKnockback();
+
+	drawHP();
+	drawBossHP();
 
 	if (isKnockback) return;
 
@@ -1402,7 +1471,7 @@ void gravityPull() {
 }
 
 void showEndGame(bool victory) {
-	system("cls");
+	clearScreen();
 	generateArenaBoundaries();
 
 	for (int y = 0; y < ARENA_WIDTH; y++) {
@@ -1421,6 +1490,10 @@ void showEndGame(bool victory) {
 	}
 
 	_getch();
+
+	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+	COORD pos = { 0, (SHORT)(ARENA_WIDTH + 1) };
+	SetConsoleCursorPosition(hConsole, pos);
 }
 
 int main()
@@ -1428,7 +1501,8 @@ int main()
 	srand(static_cast<unsigned>(time(nullptr)));
 	arenaSetup();
 	do {
-		
+		drawHP();
+		drawBossHP();
 		action();
 		updateAttack();
 		updateWalkers();
@@ -1441,13 +1515,13 @@ int main()
 		updateWaves();
 
 		updateKnockback();
-		isHP0();
+		isPlayerDead();
 		if (checkInBoundaries()) {
 			gravityPull();
 		}
 		jumpCount = 0;
 	} while (!gameOver);
 
-	showEndGame(currentWave >= TOTAL_WAVES); 
+	showEndGame(currentWave >= TOTAL_WAVES && HERO_HP > 0);
 
 }
